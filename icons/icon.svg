@@ -1,0 +1,33 @@
+<svg width="128" height="128" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .glass {
+        fill: none;
+        stroke: #4285F4; /* Google Blue */
+        stroke-width: 8; /* Thickness */
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .handle {
+        stroke: #4285F4; /* Google Blue */
+        stroke-width: 10; /* Thicker handle */
+        stroke-linecap: round;
+      }
+      .regex-text {
+        font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+        font-size: 32px; /* Adjust size as needed */
+        font-weight: bold;
+        fill: #34A853; /* Google Green */
+        text-anchor: middle; /* Center horizontally */
+        dominant-baseline: central; /* Center vertically */
+      }
+    </style>
+  </defs>
+
+  <line x1="58" y1="58" x2="85" y2="85" class="handle" />
+
+  <circle cx="45" cy="45" r="30" class="glass" />
+
+  <text x="45" y="47" class="regex-text">.*</text>
+
+</svg>
