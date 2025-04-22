@@ -183,7 +183,6 @@
 
   // --- Global Keydown (Unchanged) ---
   function handleGlobalKeydown(event) {
-    /* ... same as v1.2 ... */
     if (event.key === "Escape" && isVisible) {
       if (searchContainer?.contains(document.activeElement) || isVisible) {
         event.preventDefault();
@@ -194,7 +193,6 @@
   }
   // --- Case Sensitivity (Unchanged) ---
   function toggleCaseSensitivity() {
-    /* ... same as v1.2 ... */
     isCaseSensitive = !isCaseSensitive;
     updateCaseToggleVisuals();
     if (searchInput?.value) {
@@ -202,21 +200,18 @@
     }
   }
   function updateCaseToggleVisuals() {
-    /* ... same as v1.2 ... */
     if (caseToggleButton) {
       caseToggleButton.classList.toggle("active", isCaseSensitive);
       updateCaseToggleTitle();
     }
   }
   function updateCaseToggleTitle() {
-    /* ... same as v1.2 ... */
     if (caseToggleButton) {
       caseToggleButton.title = isCaseSensitive ? "Match Case (On)" : "Match Case (Off)";
     }
   }
   // --- Event Handlers (Unchanged) ---
   function handleInput() {
-    /* ... same as v1.2 ... */
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       if (isVisible && searchInput) {
@@ -225,7 +220,6 @@
     }, 300);
   }
   function handleKeyDown(event) {
-    /* ... same as v1.2 ... */
     if (event.key === "Enter") {
       event.preventDefault();
       if (matches.length > 0) {
@@ -238,7 +232,6 @@
   }
   // --- Search Logic (Unchanged) ---
   function performSearch(pattern) {
-    /* ... same as v1.2 ... */
     removeHighlights();
     if (!pattern) {
       updateCountDisplay();
@@ -329,7 +322,6 @@
   }
   // --- Highlights (Unchanged) ---
   function removeHighlights() {
-    /* ... same as v1.2 ... */
     for (let i = matches.length - 1; i >= 0; i--) {
       const mark = matches[i];
       const parent = mark.parentNode;
@@ -349,7 +341,6 @@
   }
   // --- Navigation (Unchanged) ---
   function navigate(direction) {
-    /* ... same as v1.2 ... */
     if (matches.length <= 1) return;
     if (currentIndex >= 0 && currentIndex < matches.length) {
       matches[currentIndex]?.classList.remove("current");
@@ -364,7 +355,6 @@
     updateCountDisplay();
   }
   function highlightCurrent() {
-    /* ... same as v1.2 ... */
     if (currentIndex >= 0 && currentIndex < matches.length) {
       const currentMatch = matches[currentIndex];
       if (currentMatch?.isConnected) {
@@ -375,13 +365,11 @@
   }
   // --- UI Updates (Unchanged) ---
   function updateButtonStates() {
-    /* ... same as v1.2 ... */
     const enableNav = matches.length > 1;
     if (prevButton) prevButton.disabled = !enableNav;
     if (nextButton) nextButton.disabled = !enableNav;
   }
   function updateCountDisplay(message = null) {
-    /* ... same as v1.2 ... */
     if (!countDisplay) return;
     if (message) {
       countDisplay.textContent = message;
