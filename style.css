@@ -25,7 +25,6 @@
 #regex-search-container button {
   outline: none;
   height: 28px;
-  /* display: flex; align-items: center; justify-content: center; <<< REMOVED */
   cursor: pointer; /* Ensure cursor is set */
   vertical-align: middle; /* Re-ensure vertical alignment */
 }
