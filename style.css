@@ -1,4 +1,3 @@
-/* Reset styles */
 #regex-search-container *,
 #regex-search-container *::before,
 #regex-search-container *::after {
@@ -21,12 +20,12 @@
   outline: none;
 }
 
-/* Base button style - REMOVED Flexbox centering here */
+/* Base button style */
 #regex-search-container button {
   outline: none;
   height: 28px;
-  cursor: pointer; /* Ensure cursor is set */
-  vertical-align: middle; /* Re-ensure vertical alignment */
+  cursor: pointer;
+  vertical-align: middle;
 }
 
 /* Container */
@@ -45,7 +44,7 @@
   gap: 8px;
   color: #202124;
   user-select: none;
-  opacity: 1;
+  opacity: 0.8;
   transition: opacity 0.2s ease-in-out;
 }
 #regex-search-container.hidden {
@@ -80,15 +79,14 @@
   font-family: inherit;
   font-size: 12px;
   padding: 2px 6px;
-  width: auto; /* Keep height from base button rule */
+  width: auto;
   color: #5f6368;
   border: 1px solid transparent;
   border-radius: 4px;
   text-align: center;
   background-color: transparent;
   transition: background-color 0.1s ease-in-out;
-  /* <<< ADDED Flexbox centering ONLY for this button >>> */
-  display: inline-flex; /* Use inline-flex or flex */
+  display: inline-flex;
   align-items: center;
   justify-content: center;
 }
@@ -137,7 +135,6 @@
   height: 28px;
   vertical-align: middle;
   background-repeat: no-repeat !important; /* Keep important */
-  /* <<< CHANGED background-position FROM center TO 5px 5px >>> */
   background-position: 5px 5px !important;
   background-size: 18px 18px;
   transition: background-color 0.15s ease-in-out;
@@ -154,7 +151,7 @@
   cursor: default;
 }
 
-/* SVG Icons - Black */
+/* SVG Icons */
 button#regex-prev-button {
   background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18" fill="%23202124"><path d="M5.25 11.47 9 7.72l3.75 3.75 1.06-1.06L9 5.6 4.19 10.41l1.06 1.06z"/></svg>');
 }
