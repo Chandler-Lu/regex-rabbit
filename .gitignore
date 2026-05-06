@@ -1,0 +1,28 @@
+node_modules/
+dist/
+.tmp/
+coverage/
+*.zip
+*.tgz
+
+# ── Generated root JS files (flattened from src/ by `npm run dev`) ──
+# Source lives in src/, root JS files are build artifacts
+/error_codes.js
+/regex_policy.js
+/search_state.js
+/highlight_renderer.js
+/worker_bridge.js
+/mutation_observer.js
+/search_coordinator.js
+/ui_controller.js
+/constants.js
+/utils.js
+/logger.js
+/defaults.js
+/unsafe_patterns.js
+/chrome_storage.js
+/coordinator.js
+
+# ── Current source files at root ──
+# background.js, content_script.js, search_worker.js,
+# style.css, options.html/js/css, manifest.json, icons/

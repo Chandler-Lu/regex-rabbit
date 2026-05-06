@@ -1,0 +1,16 @@
+{
+  "name": "regex-rabbit",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Chrome extension for regex search on any page.",
+  "scripts": {
+    "lint": "node --check background.js content_script.js domain/error_registry.js domain/pattern_analyzer.js domain/display_formatter.js infra/text_collector.js infra/highlight_engine.js infra/worker_manager.js search_worker.js",
+    "test": "node --test tests/unit/*.test.mjs",
+    "test:integration": "node --test tests/integration/*.test.mjs",
+    "build": "node scripts/package.mjs",
+    "package": "node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0"
+  }
+}

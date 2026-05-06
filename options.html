@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Regex Rabbit Options</title><link rel="stylesheet" href="options.css"></head>
+<body>
+<div class="card">
+  <h1>Regex Rabbit</h1>
+  <p class="sub">Search the current page using regular expressions.</p>
+
+  <label>UI Scale <span id="scaleVal">1.0x</span></label>
+  <input type="range" id="scale" min="0.5" max="2.5" step="0.1" value="1.0">
+
+  <label>Max Matches</label>
+  <input type="number" id="maxMatches" min="100" max="20000" value="1000">
+
+  <label>Highlight Color</label>
+  <div class="color-row">
+    <input type="color" id="highlightColor" value="#ffe082">
+    <span id="colorPreview" class="preview">Sample</span>
+  </div>
+
+  <label>Match Limit Color</label>
+  <div class="color-row">
+    <input type="color" id="currentColor" value="#ff6d00">
+    <span id="currentPreview" class="preview current">Current</span>
+  </div>
+
+  <label><input type="checkbox" id="caseSensitive"> Default Case‑Sensitive</label>
+
+  <hr>
+
+  <h2>Auto Search</h2>
+  <p class="sub">When enabled, Regex Rabbit re‑searches automatically as the page changes.</p>
+
+  <label>Debounce (ms) — delay after last page change</label>
+  <input type="number" id="autoSearchDebounce" min="500" max="5000" step="100" value="1500">
+
+  <button id="save">Save</button>
+  <span id="status"></span>
+</div>
+
+<script src="options.js"></script>
+</body>
+</html>
