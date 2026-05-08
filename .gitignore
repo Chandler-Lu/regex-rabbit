@@ -4,6 +4,7 @@ dist/
 coverage/
 *.zip
 *.tgz
+.DS_Store
 
 # ── Generated root JS files (flattened from src/ by `npm run dev`) ──
 # Source lives in src/, root JS files are build artifacts
