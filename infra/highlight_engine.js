@@ -2,7 +2,7 @@
  * @fileoverview DOM highlight renderer for Regex Rabbit search results.
  *
  * Wraps matched text ranges in `<mark>` elements with class
- * `"regex-rabbit-highlight"` and data-attribute `"regexRabbitHighlight"`
+ * `"regex-search-highlight"` and data-attribute `"regexRabbitHighlight"`
  * for identification.  Stores cleanup handles so close/refresh cycles
  * don't accidentally normalize unrelated DOM.
  *
@@ -12,7 +12,7 @@
  *   - **Indexed nodes** — produced by `SearchCoordinator.collectTextNodesBatched()`
  *     Each entry: `{ id: number, node: TextNode, text: string }`
  *   - **Worker matches** — produced by the search worker's `complete` message
- *     Each entry: `{ chunkId: number, start: number, end: number, text: string }`
+ *     Each entry: `{ chunkId: number, start: number, end: number }`
  *
  * The `chunkId` in a worker match corresponds to the `id` in an indexed node.
  * The renderer groups matches by `chunkId`, then for each group splits the
@@ -46,7 +46,7 @@
  * - `search_coordinator.js` — calls `renderMatches` / `renderMatchesBatched`
  *   and stores the returned handles for later cleanup
  * - `mutation_observer.js` — calls `ignoreOwnMutations()` after rendering
- * - `style.css` — styles `mark.regex-rabbit-highlight` and `.current`
+ * - `style.css` — styles `mark.regex-search-highlight` and `.current`
  * - `search_worker.js` — produces the `workerMatches` data
  *
  * @module highlight_renderer
@@ -114,6 +114,9 @@
     ["white-space", "inherit"],
     ["box-sizing", "content-box"]
   ];
+  var HIGHLIGHT_LAYOUT_STYLE_TEXT = HIGHLIGHT_LAYOUT_STYLES
+    .map(function (style) { return style[0] + ":" + style[1] + " !important"; })
+    .join(";");
 
   // ── Public rendering API ───────────────────────────────────────────────────
 
@@ -157,17 +160,15 @@
    *   Same format as `renderMatches`.
    * @param {Array<{chunkId:number,start:number,end:number}>} workerMatches
    *   Same format as `renderMatches`.
-   * @param {{batchSize?:number,budgetMs?:number}} [options]
+   * @param {{batchSize?:number,budgetMs?:number,shouldContinue?:Function}} [options]
    *   - `batchSize` — number of node groups to process before yielding
    *     (default: 100)
    *   - `budgetMs` — maximum milliseconds per batch before yielding
    *     (default: 8)
-   * @returns {Promise<{handles:Array<{parent:Element,marks:Array<HTMLElement>}>, marks:Array<HTMLElement>}>}
+   * @returns {Promise<{handles:Array<{parent:Element,marks:Array<HTMLElement>}>, marks:Array<HTMLElement>, cancelled?:boolean}>}
    *   Same return format as `renderMatches`.
    */
   async function renderMatchesBatched(indexedNodes, workerMatches, options) {
-    /** @type {Map<number,{id:number,node:TextNode,text:string}>} Indexed nodes keyed by id */
-    var nodesById = createNodesById(indexedNodes);
     /** @type {Map<number,Array<{chunkId:number,start:number,end:number}>>} Matches grouped by chunkId */
     var groupedMatches = createGroupedMatches(workerMatches);
     /** @type {Array<{parent:Element,marks:Array<HTMLElement>}>} Accumulated cleanup handles */
@@ -182,17 +183,28 @@
     var processed = 0;
     /** @type {number} Timestamp of the current batch start */
     var batchStartedAt = now();
+    /** @type {Function|undefined} Optional cancellation predicate */
+    var shouldContinue = options && options.shouldContinue;
 
-    for (var iterator = groupedMatches.entries(), step = iterator.next(); !step.done; step = iterator.next()) {
+    for (var i = 0; i < indexedNodes.length; i++) {
+      if (shouldContinue && !shouldContinue()) {
+        removeHighlights(handles);
+        return { handles: [], marks: [], cancelled: true };
+      }
       /** @type {number} The chunkId (= indexed node id) for this group */
-      var chunkId = step.value[0];
+      var chunkId = indexedNodes[i].id;
       /** @type {Array<{chunkId:number,start:number,end:number}>} Matches for this node */
-      var nodeMatches = step.value[1];
-      renderNodeMatches(nodesById.get(chunkId), nodeMatches, handles, marks);
+      var nodeMatches = groupedMatches.get(chunkId);
+      if (!nodeMatches || nodeMatches.length === 0) continue;
+      renderNodeMatches(indexedNodes[i], nodeMatches, handles, marks);
       processed += 1;
 
       if (processed % batchSize === 0 || now() - batchStartedAt >= budgetMs) {
         await yieldToMainThread();
+        if (shouldContinue && !shouldContinue()) {
+          removeHighlights(handles);
+          return { handles: [], marks: [], cancelled: true };
+        }
         batchStartedAt = now();
       }
     }
@@ -235,9 +247,12 @@
     /** @type {Array<HTMLElement>} */
     var marks = [];
 
-    groupedMatches.forEach(function (nodeMatches, chunkId) {
+    for (var k = 0; k < indexedNodes.length; k++) {
+      var chunkId = indexedNodes[k].id;
+      var nodeMatches = groupedMatches.get(chunkId);
+      if (!nodeMatches || nodeMatches.length === 0) continue;
       renderNodeMatches(nodesById.get(chunkId), nodeMatches, handles, marks);
-    });
+    }
 
     return { handles: handles, marks: marks };
   }
@@ -291,7 +306,7 @@
    *      alternating plain-text and `<mark>` nodes
    *   4. Skip overlapping matches (if `m.start < lastIndex`, skip)
    *   5. Replace the original text node with the assembled fragment
-   *   6. Push a cleanup handle `{ parent, marks }` onto `handles`
+   *   6. Push a cleanup handle with inserted nodes and original text
    *
    * If the text node has been removed from the DOM (`!parent.isConnected`)
    * or if no valid matches remain after filtering, the function returns
@@ -304,10 +319,8 @@
    * @param {Array<{start:number,end:number}>} nodeMatches
    *   Matches for this node (may include invalid/out-of-bounds entries;
    *   filtered by `isValidMatch()` before processing).
-   * @param {Array<{parent:Element,marks:Array<HTMLElement>}>} handles
-   *   Accumulator for cleanup handles.  Each handle groups the `<mark>`
-   *   elements that share a parent, so `removeHighlights()` can normalize
-   *   the parent after removing all its marks.
+   * @param {Array<{parent:Element,nodes?:Array<Node>,text?:string,marks:Array<HTMLElement>}>} handles
+   *   Accumulator for cleanup handles.
    * @param {Array<HTMLElement>} marks
    *   Accumulator for all `<mark>` elements.  Used by `SearchCoordinator`
    *   for match navigation.
@@ -325,44 +338,47 @@
 
     /** @type {DocumentFragment} Assembled replacement for the text node */
     var fragment = document.createDocumentFragment();
+    /** @type {Array<Node>} Nodes inserted for this text node, in DOM order */
+    var insertedNodes = [];
     /** @type {Array<HTMLElement>} <mark> elements created for this node */
     var nodeMarks = [];
     /** @type {number} Last character offset processed (tracks progress through text) */
     var lastIndex = 0;
 
-    nodeMatches
-      .filter(function (m) { return isValidMatch(m, text.length); })
-      .sort(function (a, b) { return a.start - b.start; })
-      .forEach(function (m) {
-        // Skip overlapping matches
-        if (m.start < lastIndex) return;
-        // Insert plain text between last match end and this match start
-        if (m.start > lastIndex) {
-          fragment.appendChild(document.createTextNode(text.substring(lastIndex, m.start)));
-        }
-        // Create and insert the highlight <mark>
-        var mark = createHighlightMark(text.substring(m.start, m.end));
-        fragment.appendChild(mark);
-        nodeMarks.push(mark);
-        marks.push(mark);
-        lastIndex = m.end;
-      });
+    nodeMatches.sort(function (a, b) { return a.start - b.start; });
+    for (var i = 0; i < nodeMatches.length; i++) {
+      var m = nodeMatches[i];
+      if (!isValidMatch(m, text.length) || m.start < lastIndex) continue;
+      if (m.start > lastIndex) {
+        appendReplacementNode(fragment, insertedNodes, document.createTextNode(text.substring(lastIndex, m.start)));
+      }
+      var mark = createHighlightMark(text.substring(m.start, m.end));
+      appendReplacementNode(fragment, insertedNodes, mark);
+      nodeMarks.push(mark);
+      marks.push(mark);
+      lastIndex = m.end;
+    }
 
     // If no valid matches survived filtering, don't modify the DOM
     if (nodeMarks.length === 0) return;
 
     // Append trailing text after the last match
     if (lastIndex < text.length) {
-      fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
+      appendReplacementNode(fragment, insertedNodes, document.createTextNode(text.substring(lastIndex)));
     }
 
     // Replace the original text node with the assembled fragment
     try {
       parent.replaceChild(fragment, textNode);
-      handles.push({ parent: parent, marks: nodeMarks });
+      handles.push({ parent: parent, nodes: insertedNodes, text: text, marks: nodeMarks });
     } catch (e) {
       // Node may have been removed by another process between indexing and rendering
     }
+  }
+
+  function appendReplacementNode(fragment, insertedNodes, node) {
+    fragment.appendChild(node);
+    insertedNodes.push(node);
   }
 
   /**
@@ -373,7 +389,7 @@
    * styles keep matches sized to the keyword instead of the full line.
    *
    * The element is configured with:
-   * - `class="regex-rabbit-highlight"` — for CSS styling from `style.css`
+   * - `class="regex-search-highlight"` — for CSS styling from `style.css`
    * - `data-regexRabbitHighlight="true"` — for identification by `removeHighlights()`
    * - Inline `!important` layout guard styles — from `HIGHLIGHT_LAYOUT_STYLES`
    *
@@ -399,20 +415,14 @@
    * @param {HTMLElement} mark — the highlight element to guard
    */
   function applyHighlightLayoutGuard(mark) {
-    for (var i = 0; i < HIGHLIGHT_LAYOUT_STYLES.length; i++) {
-      mark.style.setProperty(
-        HIGHLIGHT_LAYOUT_STYLES[i][0],
-        HIGHLIGHT_LAYOUT_STYLES[i][1],
-        "important"
-      );
-    }
+    mark.setAttribute("style", HIGHLIGHT_LAYOUT_STYLE_TEXT);
   }
 
   // ── Cleanup ────────────────────────────────────────────────────────────────
 
   /**
    * Remove all highlight `<mark>` elements created by `renderMatches`,
-   * restoring the original text nodes and normalizing the parent.
+   * restoring the original text node snapshots.
    *
    * Only removes `<mark>` elements that have `data-regexRabbitHighlight="true"`,
    * so page-owned `<mark>` elements are preserved.
@@ -420,17 +430,17 @@
    * Processing order: handles are processed in reverse order (last rendered
    * first removed) to correctly restore the DOM structure.
    *
-   * After removing all marks from a parent, `parent.normalize()` is called
-   * to merge adjacent text nodes that were split during rendering.
-   *
-   * @param {Array<{parent:Element,marks:Array<HTMLElement>}>} handles
+   * @param {Array<{parent:Element,nodes?:Array<Node>,text?:string,marks:Array<HTMLElement>}>} handles
    *   Cleanup handles from `renderMatches` or `renderMatchesBatched`.
    *   Each handle groups the `<mark>` elements that share a parent.
    */
   function removeHighlights(handles) {
+    var parentsToNormalize = [];
+    var seenParents = new Set();
     for (var i = handles.length - 1; i >= 0; i--) {
       var handle = handles[i];
       if (!handle || !handle.parent || !handle.parent.isConnected) continue;
+      if (restoreInsertedRange(handle)) continue;
 
       for (var j = 0; j < handle.marks.length; j++) {
         var mark = handle.marks[j];
@@ -442,11 +452,42 @@
         }
       }
 
-      try {
-        handle.parent.normalize();
-      } catch (e) {
+      if (!seenParents.has(handle.parent)) {
+        seenParents.add(handle.parent);
+        parentsToNormalize.push(handle.parent);
+      }
+    }
+
+    for (var k = 0; k < parentsToNormalize.length; k++) {
+      try { parentsToNormalize[k].normalize(); }
+      catch (e) {
         // Parent may have been removed from the DOM
       }
+    }
+  }
+
+  function restoreInsertedRange(handle) {
+    if (!handle.nodes || typeof handle.text !== "string") return false;
+    var parent = handle.parent;
+    var anchor = null;
+
+    for (var i = 0; i < handle.nodes.length; i++) {
+      if (handle.nodes[i] && handle.nodes[i].parentNode === parent) {
+        anchor = handle.nodes[i];
+        break;
+      }
+    }
+    if (!anchor) return true;
+
+    try {
+      parent.insertBefore(document.createTextNode(handle.text), anchor);
+      for (var j = 0; j < handle.nodes.length; j++) {
+        var node = handle.nodes[j];
+        if (node && node.parentNode === parent) parent.removeChild(node);
+      }
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 

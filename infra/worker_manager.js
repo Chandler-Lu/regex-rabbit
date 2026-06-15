@@ -7,6 +7,7 @@
  *
  * Public API:
  *   search(taskId, pattern, flags, nodes, policy) → Promise<SearchResult>
+ *   searchStream(taskId, pattern, flags, streamNodes, policy) → Promise<SearchResult>
  *   cancel(taskId) → void
  *   dispose() → void
  */
@@ -20,10 +21,11 @@
   var activeTimeoutId = null;
   var config = {
     maxMatches: 5000,
-    maxScannedChars: 50 * 1024 * 1024,
-    maxChunkMs: 200,
+    maxScannedChars: 256 * 1024 * 1024,
+    maxChunkMs: 250,
     workerTimeoutMs: 30000,
     batchSize: 200,
+    maxBatchChars: 1024 * 1024,
     allowUnsafeEcmascript: false
   };
 
@@ -49,11 +51,7 @@
    */
   async function search(taskId, pattern, flags, nodes, policy) {
     // Reject prior in-flight search before creating a new Worker
-    if (activeReject) {
-      var priorReject = activeReject;
-      terminate();
-      priorReject({ name: "AbortError", code: "search-cancelled", numericCode: 0, message: "Search superseded." });
-    }
+    rejectActiveSearch("Search superseded.");
 
     var url = await getBlobUrl();
 
@@ -79,29 +77,106 @@
       worker.onmessage = function (e) {
         var d = e.data;
         if (!d || d.taskId !== taskId) return;
-        if (d.type === "complete") { cleanup(false); resolve(d); }
-        else if (d.type === "error") { cleanup(false); reject({ code: d.code, numericCode: d.numericCode, message: d.message }); }
+        if (d.type === "complete") {
+          finishWorker(worker);
+          resolve(d);
+        } else if (d.type === "error") {
+          finishWorker(worker);
+          reject({ code: d.code, numericCode: d.numericCode, message: d.message });
+        }
       };
 
       // Worker crash
       worker.onerror = function (e) {
-        cleanup(false);
+        finishWorker(worker);
         reject({ code: "worker-crashed", numericCode: 503, message: e.message || "Worker crashed." });
       };
 
       // Start protocol
-      worker.postMessage({
-        type: "start", taskId: taskId, pattern: pattern, flags: flags,
-        maxMatches: config.maxMatches, maxScannedChars: config.maxScannedChars,
-        maxChunkMs: config.maxChunkMs,
-        policyStatus: (policy && policy.status) || "safe",
-        allowUnsafeEcmascript: config.allowUnsafeEcmascript
-      });
+      postStart(worker, taskId, pattern, flags, policy);
 
       // Send chunks
       sendChunks(worker, taskId, nodes)
-        .then(function () { worker.postMessage({ type: "finish", taskId: taskId }); })
-        .catch(function (e) { terminate(); reject(e); });
+        .then(function () {
+          if (activeWorker === worker && activeTaskId === taskId) {
+            worker.postMessage({ type: "finish", taskId: taskId });
+          }
+        })
+        .catch(function (e) {
+          if (activeWorker === worker && activeTaskId === taskId) {
+            terminate();
+            reject(e);
+          }
+        });
+    });
+  }
+
+  /**
+   * Stream text-node batches into the worker while the page is still being
+   * traversed. The stream callback receives `(sendBatch, shouldContinue)`.
+   *
+   * @param {number} taskId
+   * @param {string} pattern
+   * @param {string} flags
+   * @param {Function} streamNodes
+   * @param {{ok:boolean, status:string}} policy
+   * @returns {Promise<{engine:string, matches:Array, totalMatches:number, limited:boolean}>}
+   */
+  async function searchStream(taskId, pattern, flags, streamNodes, policy) {
+    rejectActiveSearch("Search superseded.");
+
+    var url = await getBlobUrl();
+    var worker;
+    try { worker = new Worker(url); }
+    catch (e) {
+      throw { code: "worker-spawn-failed", numericCode: 531, message: "Failed to create search worker: " + (e.message || String(e)) };
+    }
+
+    activeWorker = worker;
+    activeTaskId = taskId;
+
+    return new Promise(function (resolve, reject) {
+      var tid = setTimeout(function () {
+        terminate();
+        reject({ code: "search-timeout", numericCode: 504, message: "Search timed out." });
+      }, config.workerTimeoutMs);
+      activeTimeoutId = tid;
+      activeReject = reject;
+
+      worker.onmessage = function (e) {
+        var d = e.data;
+        if (!d || d.taskId !== taskId) return;
+        if (d.type === "complete") {
+          finishWorker(worker);
+          resolve(d);
+        } else if (d.type === "error") {
+          finishWorker(worker);
+          reject({ code: d.code, numericCode: d.numericCode, message: d.message });
+        }
+      };
+
+      worker.onerror = function (e) {
+        finishWorker(worker);
+        reject({ code: "worker-crashed", numericCode: 503, message: e.message || "Worker crashed." });
+      };
+
+      postStart(worker, taskId, pattern, flags, policy);
+
+      Promise.resolve().then(function () {
+        return streamNodes(
+          function (batch) { return sendBatch(worker, taskId, batch); },
+          function () { return isActive(worker, taskId); }
+        );
+      }).then(function () {
+        if (isActive(worker, taskId)) {
+          worker.postMessage({ type: "finish", taskId: taskId });
+        }
+      }).catch(function (e) {
+        if (isActive(worker, taskId)) {
+          terminate();
+          reject(e);
+        }
+      });
     });
   }
 
@@ -110,12 +185,84 @@
   async function sendChunks(worker, taskId, nodes) {
     var bs = config.batchSize;
     for (var i = 0; i < nodes.length; i += bs) {
-      var batch = nodes.slice(i, i + bs).map(function (n) { return { id: n.id, text: n.text }; });
-      worker.postMessage({ type: "chunks", taskId: taskId, chunks: batch });
-      if (i + bs < nodes.length) {
+      if (activeWorker !== worker || activeTaskId !== taskId) return;
+      var end = Math.min(i + bs, nodes.length);
+      sendNodeRange(worker, taskId, nodes, i, end);
+      if (end < nodes.length) {
         await new Promise(function (r) { setTimeout(r, 0); });
       }
     }
+  }
+
+  async function sendBatch(worker, taskId, nodes) {
+    if (!isActive(worker, taskId)) return 0;
+    var batch = [];
+    var batchChars = 0;
+    var sent = 0;
+
+    for (var j = 0; j < nodes.length; j++) {
+      if (!isActive(worker, taskId)) break;
+      var text = nodes[j].text || "";
+      var textLength = text.length;
+
+      if (batch.length > 0 && batchChars + textLength > config.maxBatchChars) {
+        worker.postMessage({ type: "chunks", taskId: taskId, chunks: batch });
+        sent += batch.length;
+        batch = [];
+        batchChars = 0;
+        await yieldToMainThread();
+        if (!isActive(worker, taskId)) break;
+      }
+
+      batch.push({ id: nodes[j].id, text: text });
+      batchChars += textLength;
+
+      if (textLength >= config.maxBatchChars) {
+        worker.postMessage({ type: "chunks", taskId: taskId, chunks: batch });
+        sent += batch.length;
+        batch = [];
+        batchChars = 0;
+        await yieldToMainThread();
+      }
+    }
+
+    if (batch.length > 0 && isActive(worker, taskId)) {
+      worker.postMessage({ type: "chunks", taskId: taskId, chunks: batch });
+      sent += batch.length;
+    }
+
+    return sent;
+  }
+
+  function sendNodeRange(worker, taskId, nodes, start, end) {
+    if (!isActive(worker, taskId)) return false;
+    var batch = [];
+    for (var j = start; j < end; j++) {
+      batch.push({ id: nodes[j].id, text: nodes[j].text });
+    }
+    worker.postMessage({ type: "chunks", taskId: taskId, chunks: batch });
+    return true;
+  }
+
+  function postStart(worker, taskId, pattern, flags, policy) {
+    worker.postMessage({
+      type: "start", taskId: taskId, pattern: pattern, flags: flags,
+      maxMatches: config.maxMatches, maxScannedChars: config.maxScannedChars,
+      maxChunkMs: config.maxChunkMs,
+      policyStatus: (policy && policy.status) || "safe",
+      allowUnsafeEcmascript: config.allowUnsafeEcmascript
+    });
+  }
+
+  function isActive(worker, taskId) {
+    return activeWorker === worker && activeTaskId === taskId;
+  }
+
+  function rejectActiveSearch(message) {
+    if (!activeReject) return;
+    var priorReject = activeReject;
+    terminate();
+    priorReject({ name: "AbortError", code: "search-cancelled", numericCode: 0, message: message });
   }
 
   // ── Cancel ───────────────────────────────────
@@ -132,6 +279,13 @@
 
   function terminate() {
     if (activeWorker) { activeWorker.terminate(); activeWorker = null; }
+    cleanup(true);
+    activeTaskId = 0;
+  }
+
+  function finishWorker(worker) {
+    try { worker.terminate(); } catch (e) {}
+    if (activeWorker === worker) activeWorker = null;
     cleanup(true);
     activeTaskId = 0;
   }
@@ -160,6 +314,7 @@
         case "maxChunkMs":
         case "workerTimeoutMs":
         case "batchSize":
+        case "maxBatchChars":
           if (typeof v === "number" && isFinite(v) && v > 0) config[k] = v;
           break;
         case "allowUnsafeEcmascript":
@@ -169,8 +324,13 @@
     }
   }
 
+  function yieldToMainThread() {
+    return new Promise(function (resolve) { setTimeout(resolve, 0); });
+  }
+
   globalThis.RRWorkerManager = {
     search: search,
+    searchStream: searchStream,
     cancel: cancel,
     dispose: dispose,
     updateConfig: updateConfig

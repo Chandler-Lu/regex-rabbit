@@ -18,7 +18,7 @@
  *
  * ## Message protocol (outbound ← worker)
  *
- *   { type: "complete", taskId, engine, matches: [{chunkId,start,end,text}], totalMatches, limited }
+ *   { type: "complete", taskId, engine, matches: [{chunkId,start,end}], totalMatches, limited }
  *   { type: "error",    taskId, code, numericCode, message }
  */
 
@@ -52,10 +52,19 @@ function now() {
 
 function createEcmaScriptEngine(pattern, flags) {
   try {
+    var literal = createLiteralEngine(pattern, flags);
+    if (literal) return literal;
     return { type: engineName(), regex: new RegExp(pattern, flags) };
   } catch (e) {
     return null;
   }
+}
+
+function createLiteralEngine(pattern, flags) {
+  flags = flags || "";
+  if (!pattern || flags.indexOf("i") !== -1 || flags.indexOf("y") !== -1) return null;
+  if (/[\\^$.*+?()[\]{}|]/.test(pattern)) return null;
+  return { type: "literal", literal: pattern };
 }
 
 /**
@@ -80,27 +89,78 @@ function selectEngine(pattern, flags, policyStatus, allowUnsafeEcmascript) {
 
 // ── Match execution ────────────────────────────────────────────────────────
 
-/**
- * Execute all matches of the engine against a text string.
- * @param {{type:string,regex:RegExp}} engine
- * @param {string} text
- * @param {number} maxChunkMs
- * @param {number} chunkStartedAt
- * @returns {Array<{index:number,length:number,text:string}>}
- */
-function execMatches(engine, text, maxChunkMs, chunkStartedAt) {
-  var results = [];
-  engine.regex.lastIndex = 0;
-  var match;
-  while ((match = engine.regex.exec(text)) !== null) {
-    results.push({ index: match.index, length: match[0].length, text: match[0] });
-    if (match[0].length === 0) {
-      if (engine.regex.lastIndex === match.index) engine.regex.lastIndex += 1;
-      if (engine.regex.lastIndex >= text.length) break;
-    }
-    if (now() - chunkStartedAt > maxChunkMs) break;
+function scanChunk(task, chunk, chunkStartedAt) {
+  if (task.engine.type === "literal") {
+    scanLiteralChunk(task, chunk, chunkStartedAt);
+    return;
   }
-  return results;
+
+  var text = chunk.text || "";
+  var regex = task.engine.regex;
+  regex.lastIndex = 0;
+  var match;
+
+  while ((match = regex.exec(text)) !== null) {
+    var length = match[0].length;
+
+    if (length > 0) {
+      task.totalMatches += 1;
+      if (task.matches.length < task.maxMatches) {
+        task.matches.push({ chunkId: chunk.id, start: match.index, end: match.index + length });
+        if (task.matches.length >= task.maxMatches) {
+          task.limited = true;
+          task.scanLimitReached = true;
+          break;
+        }
+      } else {
+        task.limited = true;
+        task.scanLimitReached = true;
+        break;
+      }
+    }
+
+    if (length === 0) {
+      if (regex.lastIndex === match.index) regex.lastIndex += 1;
+      if (regex.lastIndex >= text.length) break;
+    }
+
+    if (now() - chunkStartedAt > task.maxChunkMs) {
+      task.limited = true;
+      task.scanLimitReached = true;
+      break;
+    }
+  }
+}
+
+function scanLiteralChunk(task, chunk, chunkStartedAt) {
+  var text = chunk.text || "";
+  var needle = task.engine.literal;
+  var needleLength = needle.length;
+  var from = 0;
+  var index;
+
+  while ((index = text.indexOf(needle, from)) !== -1) {
+    task.totalMatches += 1;
+    if (task.matches.length < task.maxMatches) {
+      task.matches.push({ chunkId: chunk.id, start: index, end: index + needleLength });
+      if (task.matches.length >= task.maxMatches) {
+        task.limited = true;
+        task.scanLimitReached = true;
+        break;
+      }
+    } else {
+      task.limited = true;
+      task.scanLimitReached = true;
+      break;
+    }
+
+    from = index + needleLength;
+    if (now() - chunkStartedAt > task.maxChunkMs) {
+      task.limited = true;
+      task.scanLimitReached = true;
+      break;
+    }
+  }
 }
 
 // ── Task management ────────────────────────────────────────────────────────
@@ -120,8 +180,8 @@ function createTask(params) {
     limited: false,
     scanLimitReached: false,
     maxMatches: params.maxMatches || 5000,
-    maxScannedChars: params.maxScannedChars || 50 * 1024 * 1024,
-    maxChunkMs: params.maxChunkMs || 200
+    maxScannedChars: params.maxScannedChars || 256 * 1024 * 1024,
+    maxChunkMs: params.maxChunkMs || 250
   };
 }
 
@@ -162,33 +222,27 @@ function handleChunks(message) {
       break;
     }
 
-    var matches = execMatches(task.engine, text, task.maxChunkMs, chunkStartedAt);
-    for (var j = 0; j < matches.length; j++) {
-      var m = matches[j];
-      task.totalMatches += 1;
-      if (task.matches.length < task.maxMatches && m.length > 0) {
-        task.matches.push({ chunkId: chunk.id, start: m.index, end: m.index + m.length, text: m.text });
-      } else if (task.matches.length >= task.maxMatches) {
-        task.limited = true;
-      }
-    }
-
-    if (now() - chunkStartedAt > task.maxChunkMs) {
-      task.limited = true;
-    }
+    scanChunk(task, chunk, chunkStartedAt);
+    if (task.scanLimitReached) break;
   }
+
+  if (task.scanLimitReached) completeTask(task);
 }
 
 function handleFinish(message) {
   var task = tasks[message.taskId];
   if (!task) return;
+  completeTask(task);
+}
+
+function completeTask(task) {
   self.postMessage({
     type: "complete", taskId: task.taskId,
-    engine: engineName(),
+    engine: task.engine && task.engine.type ? task.engine.type : engineName(),
     matches: task.matches, totalMatches: task.totalMatches,
     limited: task.limited
   });
-  delete tasks[message.taskId];
+  delete tasks[task.taskId];
 }
 
 function handleCancel(message) {

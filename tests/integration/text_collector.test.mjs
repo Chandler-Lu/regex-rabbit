@@ -93,3 +93,62 @@ test("ids increment sequentially", () => {
     assert.equal(nodes[i].id, i);
   }
 });
+
+test("collectBatched returns same text order as collect", async () => {
+  const tc = setup('<body><p>a</p><p>b</p><script>skip</script><p>c</p></body>');
+  const syncNodes = tc.collect().map(n => n.text);
+  const batchedNodes = await tc.collectBatched({ batchSize: 1, budgetMs: 1 });
+  assert.deepEqual(batchedNodes.map(n => n.text), syncNodes);
+});
+
+test("collect skips excluded subtrees", () => {
+  const tc = setup('<body><script><span>skip</span></script><style>.x{}</style><p>keep</p></body>');
+  const nodes = tc.collect();
+  assert.deepEqual(nodes.map(n => n.text), ["keep"]);
+});
+
+test("collectBatched onBatch can stop traversal early", async () => {
+  const tc = setup('<body><p>a</p><p>b</p><p>c</p><p>d</p></body>');
+  const batches = [];
+  const nodes = await tc.collectBatched({
+    batchSize: 2,
+    budgetMs: 1000,
+    onBatch(batch) {
+      batches.push(batch.map(n => n.text));
+      return false;
+    }
+  });
+
+  assert.deepEqual(batches, [["a", "b"]]);
+  assert.deepEqual(nodes.map(n => n.text), ["a", "b"]);
+});
+
+test("collectBatched can stream batches without storing duplicate node list", async () => {
+  const tc = setup('<body><p>a</p><p>b</p><p>c</p></body>');
+  const streamed = [];
+  const nodes = await tc.collectBatched({
+    batchSize: 2,
+    storeNodes: false,
+    onBatch(batch) {
+      streamed.push(...batch.map(n => n.text));
+      return true;
+    }
+  });
+
+  assert.deepEqual(streamed, ["a", "b", "c"]);
+  assert.deepEqual(nodes, []);
+});
+
+test("collect does not depend on selector matching for exclusions", () => {
+  const tc = setup('<body><script>skip</script><div id="regex-search-container">ui</div><p>keep</p></body>');
+  const oldMatches = globalThis.document.defaultView.Element.prototype.matches;
+  globalThis.document.defaultView.Element.prototype.matches = function () {
+    throw new Error("matches should not be called");
+  };
+  try {
+    const nodes = tc.collect();
+    assert.deepEqual(nodes.map(n => n.text), ["keep"]);
+  } finally {
+    globalThis.document.defaultView.Element.prototype.matches = oldMatches;
+  }
+});

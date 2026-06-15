@@ -8,7 +8,8 @@
   var indexedNodes = [], matchResults = [];
   var debounceTimer = null, isVisible = false, isCaseSensitive = false;
   var autoSearchEnabled = false, autoSearchTimer = null, mutationObserver = null;
-  var searchGen = 0;
+  var searchGen = 0, activeWorkerTaskId = 0;
+  var scrollRetryTimer = null, scrollFrameId = null, scrollSeq = 0;
 
   // ── Config (synced from options page via chrome.storage.sync) ──
   var cfg = { scale: 1.0, maxMatches: 1000, highlightColor: "#ffe082", currentColor: "#ff6d00", autoSearchDebounce: 1500 };
@@ -183,15 +184,17 @@
   }
 
   // ── Search pipeline ─────────────────────────────────────────
-  function performSearch(pattern) {
+  async function performSearch(pattern) {
     removeHighlights();
     if (!pattern) { updateCount(""); updateNav(); return; }
+    var gen = ++searchGen;
 
     var flags = "gu" + (isCaseSensitive ? "" : "i");
     var regex;
+    var policy = { ok: true, status: "safe" };
 
     if (globalThis.RRPatternAnalyzer) {
-      var policy = globalThis.RRPatternAnalyzer.analyze(pattern, flags);
+      policy = globalThis.RRPatternAnalyzer.analyze(pattern, flags);
       if (policy.status === "invalid") { showError("Invalid Regex"); return; }
       if (policy.status === "unsafe")  { showError("Unsafe Regex"); return; }
     }
@@ -202,16 +205,52 @@
     } catch (e) { showError("Invalid Regex"); return; }
 
     if (!document.body) { updateCount("0"); updateNav(); return; }
+    updateCount("Searching");
 
-    // Collect text nodes via TextCollector (with fallback)
-    indexedNodes = collectNodes();
-
-    // Time-sliced matching — yield every N nodes to keep UI responsive
     matchResults = [];
     marks = [];
     currentIndex = -1;
-    var gen = ++searchGen;
+
+    if (canStreamToWorker()) {
+      await searchWithWorkerStream(gen, pattern, flags, policy);
+      return;
+    }
+
+    indexedNodes = await collectNodesAsync(gen);
+    if (gen !== searchGen) return;
+
+    if (indexedNodes.length === 0) { finishSearch(gen, { limited: false }); return; }
+
+    if (globalThis.RRWorkerManager && typeof globalThis.RRWorkerManager.search === "function") {
+      await searchWithWorker(gen, pattern, flags, indexedNodes, policy);
+      return;
+    }
+
     matchChunked(0, indexedNodes, regex, gen);
+  }
+
+  async function collectNodesAsync(gen) {
+    if (globalThis.RRTextCollector && typeof globalThis.RRTextCollector.collectBatched === "function") {
+      try {
+        return await globalThis.RRTextCollector.collectBatched({
+          batchSize: 500,
+          budgetMs: 8,
+          shouldContinue: function () { return gen === searchGen; }
+        });
+      } catch (e) {
+        if (typeof console !== "undefined") console.debug("[RegexRabbit] TextCollector batched failed:", e.message);
+      }
+    }
+    return collectNodes();
+  }
+
+  function canStreamToWorker() {
+    return (
+      globalThis.RRWorkerManager &&
+      typeof globalThis.RRWorkerManager.searchStream === "function" &&
+      globalThis.RRTextCollector &&
+      typeof globalThis.RRTextCollector.collectBatched === "function"
+    );
   }
 
   function collectNodes() {
@@ -233,6 +272,76 @@
     return nodes;
   }
 
+  async function searchWithWorker(gen, pattern, flags, nodes, policy) {
+    try {
+      activeWorkerTaskId = gen;
+      updateWorkerConfig();
+      var result = await globalThis.RRWorkerManager.search(gen, pattern, flags, nodes, policy);
+      if (activeWorkerTaskId === gen) activeWorkerTaskId = 0;
+      if (gen !== searchGen) return;
+      matchResults = result.matches || [];
+      await finishSearch(gen, result);
+    } catch (e) {
+      if (activeWorkerTaskId === gen) activeWorkerTaskId = 0;
+      if (gen !== searchGen || (e && e.name === "AbortError")) return;
+      if (typeof console !== "undefined") console.debug("[RegexRabbit] Worker search failed:", e && e.message ? e.message : e);
+      matchChunked(0, nodes, new RegExp(pattern, flags), gen);
+    }
+  }
+
+  async function searchWithWorkerStream(gen, pattern, flags, policy) {
+    var streamedNodes = [];
+    indexedNodes = streamedNodes;
+    try {
+      activeWorkerTaskId = gen;
+      updateWorkerConfig();
+      var result = await globalThis.RRWorkerManager.searchStream(
+        gen,
+        pattern,
+        flags,
+        async function (sendBatch, shouldContinue) {
+          await globalThis.RRTextCollector.collectBatched({
+            batchSize: 256,
+            budgetMs: 8,
+            storeNodes: false,
+            shouldContinue: function () { return gen === searchGen && shouldContinue(); },
+            onBatch: async function (batch) {
+              if (gen !== searchGen || !shouldContinue()) return false;
+              var sent = await sendBatch(batch);
+              if (!sent) return false;
+              for (var i = 0; i < sent; i++) streamedNodes.push(batch[i]);
+              return sent === batch.length;
+            }
+          });
+        },
+        policy
+      );
+      if (activeWorkerTaskId === gen) activeWorkerTaskId = 0;
+      if (gen !== searchGen) return;
+      matchResults = result.matches || [];
+      await finishSearch(gen, result);
+    } catch (e) {
+      if (activeWorkerTaskId === gen) activeWorkerTaskId = 0;
+      if (gen !== searchGen || (e && e.name === "AbortError")) return;
+      if (typeof console !== "undefined") console.debug("[RegexRabbit] Streaming worker search failed:", e && e.message ? e.message : e);
+      indexedNodes = await collectNodesAsync(gen);
+      if (gen !== searchGen) return;
+      matchChunked(0, indexedNodes, new RegExp(pattern, flags), gen);
+    }
+  }
+
+  function updateWorkerConfig() {
+    if (!globalThis.RRWorkerManager.updateConfig) return;
+    globalThis.RRWorkerManager.updateConfig({
+      maxMatches: cfg.maxMatches,
+      maxScannedChars: 256 * 1024 * 1024,
+      maxChunkMs: 250,
+      workerTimeoutMs: 30000,
+      batchSize: 256,
+      maxBatchChars: 1024 * 1024
+    });
+  }
+
   function showError(msg) {
     if (input) input.classList.add("invalid");
     updateCount(msg);
@@ -241,19 +350,23 @@
 
   function matchChunked(startIdx, nodes, regex, gen) {
     if (gen !== searchGen) return;
-    var chunkSize = 50;
-    var end = Math.min(startIdx + chunkSize, nodes.length);
     var max = cfg.maxMatches;
+    var startedAt = now();
+    var i = startIdx;
 
-    for (var i = startIdx; i < end; i++) {
-      if (matchResults.length >= max) return finishSearch();
+    for (; i < nodes.length; i++) {
+      if (matchResults.length >= max) return finishSearch(gen, { limited: true });
       matchNode(nodes[i], regex, max);
+      if (i > startIdx && now() - startedAt >= 8) {
+        i += 1;
+        break;
+      }
     }
 
-    if (end < nodes.length) {
-      setTimeout(function () { matchChunked(end, nodes, regex, gen); }, 0);
+    if (i < nodes.length) {
+      setTimeout(function () { matchChunked(i, nodes, regex, gen); }, 0);
     } else {
-      finishSearch();
+      finishSearch(gen, { limited: false });
     }
   }
 
@@ -267,7 +380,7 @@
     var m;
     while ((m = regex.exec(text)) !== null && matchResults.length < max) {
       if (m[0].length > 0) {
-        matchResults.push({ chunkId: info.id, start: m.index, end: m.index + m[0].length, text: m[0] });
+        matchResults.push({ chunkId: info.id, start: m.index, end: m.index + m[0].length });
       }
       if (m[0].length === 0) {
         if (regex.lastIndex === m.index) regex.lastIndex += 1;
@@ -276,33 +389,54 @@
     }
   }
 
-  function finishSearch() {
+  async function finishSearch(gen, result) {
+    if (gen !== searchGen) return;
     if (matchResults.length > 0) {
-      renderResults();
+      await renderResults(gen);
     }
-    updateCount(formatCount(marks.length));
+    if (gen !== searchGen) return;
+    updateCount(formatCount(marks.length, result && result.limited));
     updateNav();
   }
 
-  function renderResults() {
-    if (globalThis.RRHighlightEngine) {
-      try {
-        var result = globalThis.RRHighlightEngine.renderMatches(indexedNodes, matchResults);
-        marks = result.marks || [];
-        highlightHandles = result.handles || null;
-        if (marks.length > 0) { currentIndex = 0; highlightCurrent(); }
-        return;
-      } catch (e) { if (typeof console !== "undefined") console.debug("[RegexRabbit] HighlightEngine failed:", e.message); }
+  async function renderResults(gen) {
+    var resumeObserver = pauseAutoSearchObserver();
+    try {
+      if (globalThis.RRHighlightEngine) {
+        try {
+          var result;
+          if (typeof globalThis.RRHighlightEngine.renderMatchesBatched === "function" && matchResults.length > 100) {
+            result = await globalThis.RRHighlightEngine.renderMatchesBatched(indexedNodes, matchResults, {
+              batchSize: 50,
+              budgetMs: 8,
+              shouldContinue: function () { return gen === searchGen; }
+            });
+          } else {
+            result = globalThis.RRHighlightEngine.renderMatches(indexedNodes, matchResults);
+          }
+          if (result && result.cancelled) return;
+          if (gen !== searchGen) {
+            if (result && result.handles) globalThis.RRHighlightEngine.removeHighlights(result.handles);
+            return;
+          }
+          marks = result.marks || [];
+          highlightHandles = result.handles || null;
+          if (marks.length > 0) { currentIndex = 0; highlightCurrent({ scroll: true, gen: gen, reason: "initial" }); }
+          return;
+        } catch (e) { if (typeof console !== "undefined") console.debug("[RegexRabbit] HighlightEngine failed:", e.message); }
+      }
+      // Inline fallback rendering
+      marks = [];
+      for (var i = 0; i < matchResults.length; i++) {
+        var mr = matchResults[i];
+        var info = findNodeById(mr.chunkId);
+        if (!info) continue;
+        inlineRenderMatch(info, mr);
+      }
+      if (marks.length > 0) { currentIndex = 0; highlightCurrent({ scroll: true, gen: gen, reason: "initial" }); }
+    } finally {
+      resumeAutoSearchObserver(resumeObserver);
     }
-    // Inline fallback rendering
-    marks = [];
-    for (var i = 0; i < matchResults.length; i++) {
-      var mr = matchResults[i];
-      var info = findNodeById(mr.chunkId);
-      if (!info) continue;
-      inlineRenderMatch(info, mr);
-    }
-    if (marks.length > 0) { currentIndex = 0; highlightCurrent(); }
   }
 
   function findNodeById(id) {
@@ -322,36 +456,62 @@
     if (mr.start > 0) frag.appendChild(document.createTextNode(text.substring(0, mr.start)));
     var mark = document.createElement("mark");
     mark.className = "regex-search-highlight";
-    mark.textContent = mr.text;
+    mark.textContent = typeof mr.text === "string" ? mr.text : text.substring(mr.start, mr.end);
     frag.appendChild(mark);
     marks.push(mark);
     if (mr.end < text.length) frag.appendChild(document.createTextNode(text.substring(mr.end)));
     try { parent.replaceChild(frag, tn); } catch (e) { if (typeof console !== "undefined") console.debug("[RegexRabbit] inlineRender replaceChild failed:", e.message); }
   }
 
-  function formatCount(total) {
-    if (total > 0) return (currentIndex >= 0 ? currentIndex + 1 : 0) + "/" + total;
+  function formatCount(total, limited) {
+    var suffix = limited ? "+" : "";
+    if (total > 0) return (currentIndex >= 0 ? currentIndex + 1 : 0) + "/" + total + suffix;
     return "0";
   }
 
   function removeHighlights() {
-    if (globalThis.RRHighlightEngine && highlightHandles) {
-      try {
-        globalThis.RRHighlightEngine.removeHighlights(highlightHandles);
-      } catch (e) { if (typeof console !== "undefined") console.debug("[RegexRabbit] removeHighlights failed:", e.message); }
-      highlightHandles = null;
-    } else {
-      // Inline fallback cleanup
-      for (var i = marks.length - 1; i >= 0; i--) {
-        var m = marks[i], p = m && m.parentNode;
-        if (m && m.isConnected && p) {
-          try { p.replaceChild(document.createTextNode(m.textContent), m); p.normalize(); } catch (e) { if (typeof console !== "undefined") console.debug("[RegexRabbit] removeHighlight replaceChild failed:", e.message); }
+    searchGen += 1;
+    cancelActiveWorker();
+    cancelPendingScroll();
+    var resumeObserver = pauseAutoSearchObserver();
+    try {
+      if (globalThis.RRHighlightEngine && highlightHandles) {
+        try {
+          globalThis.RRHighlightEngine.removeHighlights(highlightHandles);
+        } catch (e) { if (typeof console !== "undefined") console.debug("[RegexRabbit] removeHighlights failed:", e.message); }
+        highlightHandles = null;
+      } else {
+        // Inline fallback cleanup
+        for (var i = marks.length - 1; i >= 0; i--) {
+          var m = marks[i], p = m && m.parentNode;
+          if (m && m.isConnected && p) {
+            try { p.replaceChild(document.createTextNode(m.textContent), m); p.normalize(); } catch (e) { if (typeof console !== "undefined") console.debug("[RegexRabbit] removeHighlight replaceChild failed:", e.message); }
+          }
         }
       }
+    } finally {
+      resumeAutoSearchObserver(resumeObserver);
     }
     marks = []; matchResults = []; indexedNodes = []; currentIndex = -1;
     if (input) input.classList.remove("invalid");
     updateCount(""); updateNav();
+  }
+
+  function cancelActiveWorker() {
+    if (!activeWorkerTaskId || !globalThis.RRWorkerManager || !globalThis.RRWorkerManager.cancel) return;
+    try { globalThis.RRWorkerManager.cancel(activeWorkerTaskId); } catch (e) {}
+    activeWorkerTaskId = 0;
+  }
+
+  function pauseAutoSearchObserver() {
+    if (!mutationObserver) return false;
+    mutationObserver.disconnect();
+    mutationObserver = null;
+    return true;
+  }
+
+  function resumeAutoSearchObserver(shouldResume) {
+    if (shouldResume && autoSearchEnabled && isVisible) startAutoSearch();
   }
 
   function navigate(dir) {
@@ -363,20 +523,105 @@
     currentIndex += dir;
     if (currentIndex < 0) currentIndex = marks.length - 1;
     else if (currentIndex >= marks.length) currentIndex = 0;
-    highlightCurrent();
+    highlightCurrent({ scroll: true, gen: searchGen, reason: "navigation" });
     updateCount((currentIndex + 1) + "/" + marks.length);
   }
 
-  function highlightCurrent() {
+  function highlightCurrent(options) {
     if (currentIndex < 0 || currentIndex >= marks.length) return;
     var m = marks[currentIndex];
     if (m && m.isConnected) {
+      clearCurrentMarks(m);
       m.classList.add("current");
-      m.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (!options || options.scroll !== false) {
+        scheduleScrollToMark(m, options || {});
+      }
+    }
+  }
+
+  function clearCurrentMarks(activeMark) {
+    for (var i = 0; i < marks.length; i++) {
+      var mark = marks[i];
+      if (mark && mark !== activeMark && mark.isConnected) mark.classList.remove("current");
+    }
+  }
+
+  function scheduleScrollToMark(mark, options) {
+    if (!mark || !mark.isConnected) return;
+    cancelPendingScroll();
+    var seq = ++scrollSeq;
+    var gen = typeof options.gen === "number" ? options.gen : searchGen;
+    var attempts = options.reason === "initial" ? 4 : 2;
+
+    runAfterFrame(function () {
+      scrollMarkIntoView(mark, gen, seq);
+      retryScrollIfNeeded(mark, gen, seq, attempts - 1, 90);
+    });
+  }
+
+  function retryScrollIfNeeded(mark, gen, seq, remaining, delay) {
+    if (remaining <= 0) return;
+    scrollRetryTimer = setTimeout(function () {
+      scrollRetryTimer = null;
+      if (!isScrollRequestCurrent(mark, gen, seq)) return;
+      if (!isMostlyInViewport(mark)) scrollMarkIntoView(mark, gen, seq);
+      retryScrollIfNeeded(mark, gen, seq, remaining - 1, Math.min(delay * 2, 360));
+    }, delay);
+  }
+
+  function scrollMarkIntoView(mark, gen, seq) {
+    if (!isScrollRequestCurrent(mark, gen, seq)) return;
+    try {
+      mark.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+    } catch (e) {
+      try { mark.scrollIntoView(true); } catch (ignored) {}
+    }
+  }
+
+  function isScrollRequestCurrent(mark, gen, seq) {
+    return seq === scrollSeq && gen === searchGen && mark && mark.isConnected;
+  }
+
+  function isMostlyInViewport(mark) {
+    if (!mark || !mark.isConnected || typeof mark.getBoundingClientRect !== "function") return true;
+    var rect = mark.getBoundingClientRect();
+    var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    var vw = window.innerWidth || document.documentElement.clientWidth || 0;
+    if (vh <= 0 || vw <= 0) return true;
+    return rect.bottom >= 0 && rect.top <= vh && rect.right >= 0 && rect.left <= vw;
+  }
+
+  function runAfterFrame(fn) {
+    if (typeof requestAnimationFrame === "function") {
+      scrollFrameId = requestAnimationFrame(function () {
+        scrollFrameId = null;
+        fn();
+      });
+    } else {
+      scrollRetryTimer = setTimeout(function () {
+        scrollRetryTimer = null;
+        fn();
+      }, 0);
+    }
+  }
+
+  function cancelPendingScroll() {
+    scrollSeq += 1;
+    if (scrollRetryTimer !== null) {
+      clearTimeout(scrollRetryTimer);
+      scrollRetryTimer = null;
+    }
+    if (scrollFrameId !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(scrollFrameId);
+      scrollFrameId = null;
     }
   }
 
   function updateCount(text) { if (countEl) countEl.textContent = text; }
+  function now() {
+    if (typeof performance !== "undefined" && performance.now) return performance.now();
+    return Date.now();
+  }
   function updateNav() {
     var e = marks.length > 1;
     if (prevBtn) prevBtn.disabled = !e;
@@ -407,7 +652,6 @@
       mutationObserver = new MutationObserver(function (mutations) {
         for (var i = 0; i < mutations.length; i++) {
           var target = mutations[i].target;
-          if (target && target.closest && target.closest("#regex-search-container")) continue;
           if (target === container || (container && container.contains(target))) continue;
           scheduleAutoSearch();
           return;

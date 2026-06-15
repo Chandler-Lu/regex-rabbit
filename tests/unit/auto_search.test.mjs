@@ -110,7 +110,6 @@ test("debounce: not visible skips search", async () => {
 function shouldTriggerSearch(mutations, containerEl) {
   for (var i = 0; i < mutations.length; i++) {
     var target = mutations[i].target;
-    if (target && target.closest && target.closest("#regex-search-container")) continue;
     if (target === containerEl || (containerEl && containerEl.contains(target))) continue;
     return true;
   }
@@ -119,7 +118,7 @@ function shouldTriggerSearch(mutations, containerEl) {
 
 test("mutation filter: normal DOM mutation triggers", () => {
   var result = shouldTriggerSearch(
-    [{ type: "childList", target: { closest: function () { return null; } } }],
+    [{ type: "childList", target: {} }],
     null
   );
   assert.equal(result, true);
@@ -136,7 +135,7 @@ test("mutation filter: own container mutation skipped", () => {
 
 test("mutation filter: child of container skipped", () => {
   var container = { contains: function (t) { return t === child; } };
-  var child = { closest: function () { return null; } };
+  var child = {};
   var result = shouldTriggerSearch(
     [{ type: "childList", target: child }],
     container
@@ -144,17 +143,17 @@ test("mutation filter: child of container skipped", () => {
   assert.equal(result, false);
 });
 
-test("mutation filter: #regex-search-container descendant skipped", () => {
-  var el = { closest: function (sel) { return sel === "#regex-search-container" ? {} : null; } };
+test("mutation filter: does not call closest on mutation targets", () => {
+  var el = { closest: function () { throw new Error("closest should not be called"); } };
   var result = shouldTriggerSearch(
     [{ type: "childList", target: el }],
     null
   );
-  assert.equal(result, false);
+  assert.equal(result, true);
 });
 
 test("mutation filter: unrelated DOM element triggers", () => {
-  var el = { closest: function () { return null; } };
+  var el = {};
   var container = { contains: function () { return false; } };
   var result = shouldTriggerSearch(
     [{ type: "characterData", target: el }],
