@@ -1,0 +1,11 @@
+{
+  "appName": {
+    "message": "Regex Rabbit"
+  },
+  "appDescription": {
+    "message": "Chrome에서 정규식으로 현재 페이지를 검색합니다."
+  },
+  "openCommand": {
+    "message": "Regex Rabbit 열기"
+  }
+}

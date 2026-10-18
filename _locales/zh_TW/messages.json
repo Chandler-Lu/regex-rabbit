@@ -1,0 +1,11 @@
+{
+  "appName": {
+    "message": "Regex Rabbit"
+  },
+  "appDescription": {
+    "message": "在 Chrome 中使用正規表示式搜尋目前頁面。"
+  },
+  "openCommand": {
+    "message": "開啟 Regex Rabbit"
+  }
+}
