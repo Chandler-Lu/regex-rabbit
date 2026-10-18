@@ -1,53 +1,33 @@
 # Privacy Policy
 
 **Regex Rabbit Chrome Extension**
-Effective date: May 8, 2026
-
----
+Effective date: October 18, 2026
 
 ## Overview
 
-Regex Rabbit is a Chrome extension that lets you search the current page using regular expressions. This policy explains what data the extension touches, how it is used, and who can access it.
+Regex Rabbit searches text on the active page in the browser. The extension does not send page content or search patterns to a Regex Rabbit server. Appearance and search preferences are stored with Chrome's storage APIs; Chrome may synchronize `chrome.storage.sync` preferences across devices when Chrome Sync is enabled for the user.
 
-**The short answer: all data stays on your device and is never sent anywhere.**
+## Data the extension accesses
 
----
-
-## What data the extension accesses
-
-| Data type | How it is used | Where it stays |
+| Data | Use | Storage |
 |---|---|---|
-| User preferences *(max matches, highlight color, UI scale, case sensitivity)* | Saved so your settings persist across browser sessions | Local only (`chrome.storage.sync`) |
-| Current page DOM content | Read in-memory to execute the regex search and highlight matches | Never leaves the tab |
-| Search patterns entered by the user | Used solely to perform the search on the active tab | Never stored |
+| Text and visible control values on the active page | Read in memory to collect search text, find matches, and display highlights | Not persisted by the extension; not sent to Regex Rabbit or another remote service |
+| Search patterns | Run the requested page search | Not persisted by the extension |
+| Search and appearance preferences, including limits, colors, scale, language, and toolbar-position setting | Restore the user's chosen behavior and appearance | `chrome.storage.sync`; Chrome may synchronize these settings according to the user's Chrome Sync configuration |
+| Toolbar coordinates | Restore the toolbar position when permanent position memory is enabled | `chrome.storage.local` in the browser profile; disabling the option removes the saved coordinates |
 
----
+During a search, page text and patterns are passed between the tab and an extension offscreen document so an isolated Web Worker can perform matching. They remain in browser memory for that search and are released when the task completes, is canceled, or fails.
 
 ## Data sharing
 
-No user data is shared with any third party — ever. The extension makes no network requests. It has no analytics, no telemetry, no crash reporting, and no remote configuration. There is no server.
+Regex Rabbit has no analytics, telemetry, crash reporting, remote configuration, or Regex Rabbit server. The extension does not transmit page content or search patterns to third parties. Chrome's built-in synchronization of `chrome.storage.sync` preferences is governed by the user's Chrome account and Sync settings.
 
----
+## Extension permissions
 
-## How the `storage` permission is used
-
-The `storage` permission is used exclusively to save your extension preferences (highlight color, max match count, UI scale, and case-sensitivity toggle) via `chrome.storage.sync`. This data is scoped to your own Chrome profile. It is never read by, transmitted to, or accessible by anyone other than the extension running locally in your browser.
-
----
-
-## What we do not do
-
-Regex Rabbit does not:
-
-- Collect or log search patterns, page content, or browsing history
-- Send any data to external servers or third parties
-- Use analytics or tracking of any kind
-- Monetize user data
-- Share data with advertisers, data brokers, or any other parties
-
----
+- `activeTab` and `scripting` let the extension access and add its search interface to the active tab after the user invokes it.
+- `offscreen` lets the extension host its local matching Worker outside the page's content security policy.
+- `storage` saves preferences and, when enabled, toolbar coordinates as described above.
 
 ## Contact
 
-Questions about this policy can be raised via the project's GitHub repository:
-[github.com/Chandler-Lu/regex-rabbit](https://github.com/Chandler-Lu/regex-rabbit)
+Questions about this policy can be raised through the project's GitHub repository: [github.com/GuangDai/regex-rabbit](https://github.com/GuangDai/regex-rabbit).
