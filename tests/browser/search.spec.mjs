@@ -983,9 +983,10 @@ test('Chinese toolbar groups are explicit, keyboard operable and collapsed optio
   const toolbar=page.locator('#regex-search-container'),input=page.locator('#regex-search-input');
   await expect(toolbar).toHaveAccessibleName(/查找|搜索/);
   await expect(input).toHaveAccessibleName(/查找|搜索/);
-  await expect(page.locator('#regex-search-scope')).toHaveAttribute('role','radiogroup');
-  await expect(page.locator('#regex-scope-page')).toHaveAttribute('role','radio');
-  await expect(page.locator('#regex-scope-page')).toHaveAttribute('aria-checked','true');
+  await expect(page.locator('#regex-search-scope')).toHaveRole('button');
+  await expect(page.locator('#regex-search-scope')).toHaveJSProperty('value', 'page');
+  await expect(page.locator('#regex-search-scope')).toHaveAccessibleName('搜索范围：全局；点击切换至选区');
+  await expect(page.locator('#regex-search-scope svg')).toBeVisible();
   await expect(page.locator('#regex-mode-regex')).toHaveAttribute('role','radio');
   await expect(page.locator('#regex-mode-literal')).toHaveText('文本');
   await expect(page.locator('#regex-mode-regex')).toHaveText('正则');
@@ -1002,7 +1003,7 @@ test('Chinese toolbar groups are explicit, keyboard operable and collapsed optio
     const focus=await page.evaluate(()=>({id:document.activeElement?.id,inToolbar:!!document.activeElement?.closest('#regex-search-container')}));
     reached.push(focus.id);if(!focus.inToolbar)break;
   }
-  expect(reached).not.toEqual(expect.arrayContaining(['regex-mode-literal','regex-mode-regex','regex-scope-page','regex-scope-selection','regex-word-toggle','regex-multiline-toggle','regex-dotall-toggle','regex-auto-toggle','regex-settings-button']));
+  expect(reached.filter(id => ['regex-mode-literal','regex-mode-regex','regex-word-toggle','regex-multiline-toggle','regex-dotall-toggle','regex-auto-toggle','regex-settings-button'].includes(id))).toEqual([]);
   await openAdvanced(page);
   await expect(page.locator('#regex-advanced-panel')).toHaveAttribute('role','dialog');
   await expect(page.locator('#regex-search-mode')).toBeHidden();
@@ -1010,7 +1011,7 @@ test('Chinese toolbar groups are explicit, keyboard operable and collapsed optio
   await page.locator('#regex-advanced-toggle').click();
   await page.locator('#regex-advanced-toggle').focus();
   await page.keyboard.press('Enter');
-  await expect(page.locator('#regex-scope-page')).toBeFocused();
+  await expect(page.locator('#regex-word-toggle')).toBeFocused();
   await page.setViewportSize({width:320,height:844});
   await expect(page.locator('#regex-mode-toggle')).toBeHidden();
   await expect(page.locator('#regex-search-mode')).toBeVisible();
@@ -1027,13 +1028,14 @@ test('Chinese toolbar groups are explicit, keyboard operable and collapsed optio
   await expect(page.locator('#regex-mode-literal')).toBeFocused();
   await expect(page.locator('#regex-mode-literal')).toHaveAttribute('aria-checked','true');
   await expect(page.locator('#regex-mode-toggle')).toHaveAttribute('aria-pressed','false');
-  await page.locator('#regex-scope-page').focus();
-  await page.keyboard.press('ArrowRight');
-  await expect(page.locator('#regex-scope-selection')).toBeFocused();
-  await expect(page.locator('#regex-scope-selection')).toHaveAttribute('aria-checked','true');
-  await page.keyboard.press('Home');
-  await expect(page.locator('#regex-scope-page')).toBeFocused();
-  await expect(page.locator('#regex-scope-page')).toHaveAttribute('aria-checked','true');
+  await page.locator('#regex-search-scope').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#regex-search-scope')).toBeFocused();
+  await expect(page.locator('#regex-search-scope')).toHaveJSProperty('value', 'selection');
+  await expect(page.locator('#regex-advanced-panel')).toBeHidden();
+  await page.keyboard.press('Space');
+  await expect(page.locator('#regex-search-scope')).toBeFocused();
+  await expect(page.locator('#regex-search-scope')).toHaveJSProperty('value', 'page');
   await search(page,'literal[a]+',1);
   await openAdvanced(page);
   await expect(page.locator('#regex-multiline-toggle')).toBeDisabled();
@@ -1537,6 +1539,7 @@ test('result counts and query states keep the input, navigation controls and too
       await page.locator('#regex-search-input').fill(query);
       if(status)await expect(page.locator('#regex-search-status')).toHaveText(status);
       else await expect(page.locator('#regex-search-count')).toHaveText(count);
+      await expect(page.locator('#regex-search-count')).toHaveCSS('font-size','12px');
       const results=await page.evaluate(()=>{cancelAnimationFrame(window.uiLayoutSampleFrame);return window.uiLayoutFrames;});
       results.push(await snapshot());
       const failures=[];
@@ -1583,6 +1586,7 @@ test('result counts and query states keep the input, navigation controls and too
   }
   await page.locator('#regex-prev-button').click();
   await expect(page.locator('#regex-search-count')).toHaveText('20000/20000+');
+  await expect(page.locator('#regex-search-count')).toHaveCSS('font-size','10px');
   const largeResult=await snapshot();
   for(const [id,values] of Object.entries(largeResult))for(let index=0;index<values.length;index++) {
     expect(Math.abs(values[index]-largeBaseline[id][index]),`20000 result limit: ${id} coordinate ${index}`).toBeLessThanOrEqual(1);
@@ -1596,6 +1600,11 @@ test('result counts and query states keep the input, navigation controls and too
     });
     expect(countWidth.ink).toBeLessThanOrEqual(countWidth.box+1);
   }
+  await page.setViewportSize({width:1280,height:900});
+  await page.locator('#regex-search-input').fill('shadowBeacon');
+  await expectTotal(page,1);
+  await expect(page.locator('#regex-search-count')).toHaveCSS('font-size','12px');
+  await saveUIShot(page,'ui-compact-readable-count',page.locator('#regex-search-container'));
   expect(app.pageErrors).toEqual([]);
 });
 

@@ -264,10 +264,9 @@ export async function openAdvanced(page) {
 }
 
 export async function chooseScope(page, scope) {
-  const button=page.locator(`#regex-scope-${scope}`);
-  if (!await button.isVisible()) await openAdvanced(page);
-  await button.click();
-  await expect(button).toHaveAttribute('aria-checked','true');
+  const button=page.locator("#regex-search-scope");
+  if (await button.evaluate(node => node.value) !== scope) await button.click();
+  await expect(button).toHaveJSProperty('value', scope);
 }
 
 export async function chooseMode(page, mode) {

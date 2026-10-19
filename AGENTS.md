@@ -33,7 +33,7 @@ npm run build            # 完整的未打包扩展及 ZIP
 - `infra/worker_manager.js`：任务取消、启动及运行超时、流式批次确认。
 - `infra/search_controller.js`：查询校验、采集、匹配、渲染、状态与资源释放。
 - `infra/ui_i18n.js`：界面语言解析、纯文本词条、数字格式与显式 DOM 翻译；不读取配置或保存数据。
-- `infra/search_toolbar.js`：单行搜索栏、弹出选项菜单、方式与范围的键盘单选、控件状态与错误反馈；不执行查询或滚动。
+- `infra/search_toolbar.js`：单行搜索栏、弹出选项菜单、方式的键盘单选与主栏范围切换、控件状态与错误反馈；不执行查询或滚动。
 - `infra/toolbar_position.js`：拖柄交互、位置保留、视口限制及可选的本地坐标保存；不执行查询或定位匹配。
 - `search_worker.js`：仅在 Worker 内运行的匹配器，校验协议和扫描上限。
 - `background.js`：顶层 frame 注入、发送人校验、消息转发、经发送人验证的设置入口和 offscreen 生命周期。
@@ -78,7 +78,7 @@ npm run build            # 完整的未打包扩展及 ZIP
 - `RRSearchController.create(callbacks)` 持有结果清理和查询世代。过期任务不能覆盖新查询结果；界面回调接收状态、观察根和导航对象。
 - `RRi18n.resolveLanguage(value)` 解析 `uiLanguage`；`setLanguage/getLanguage/t(key,params)/formatNumber/apply(root)` 用于更新语言、纯文本翻译、数字和显式 DOM 翻译。`auto` 优先采用浏览器界面语言，不支持的语言回退到英语；翻译词条不得作为 HTML 注入。
 - `RRToolbarPosition.create({container,handle,onMove,onCommit,onDragStart})` 返回 `show/hide/refresh/setConfig/attach/reset/dispose`。`attach` 在重建搜索栏时更换节点，`refresh` 按可见视口和缩放夹回位置。坐标保存为归一化的 `{version:1,x,y}`，只有 `rememberPosition:true` 时使用 `chrome.storage.local` 的 `regexRabbitToolbarPosition`；`uiLanguage` 和记忆开关随其他配置保存到 `storage.sync`。
-- `RRSearchToolbar.create(actions)` 返回搜索栏节点、选项更新、状态反馈和菜单接口。方式和范围使用单选按钮组；只在用户切换值时发出事件。更新计数后调用 `syncCount()` 同步无障碍标签及菜单导航状态，并取消已过期的序号输入；`onJump(index)` 接收从 1 开始的有效结果序号，`cancelJump(true)` 取消输入并还焦点给计数按钮。`refreshLanguage()` 更新界面词条，`reposition()` 按浮层空间选择上下展开，`getAvoidRect()` 包含当前可见菜单和错误提示。`closeDetails(true)` 关闭菜单并将焦点还给更多按钮；输入框聚焦、点击页面和导航操作关闭菜单。查询文字和错误消息必须通过 `textContent` 或输入框的 `value` 显示。
+- `RRSearchToolbar.create(actions)` 返回搜索栏节点、选项更新、状态反馈和菜单接口。方式使用单选按钮组，范围使用大小写按钮后的主栏图标按钮切换“全局 / 选区”，默认主栏宽 400px 且保留全部主栏按钮；保留 scopeEl.value 的 page/selection 合同，只在用户切换值时发出 change 事件，程序赋值不发事件。更新计数后调用 `syncCount()` 同步无障碍标签及菜单导航状态，并取消已过期的序号输入；`onJump(index)` 接收从 1 开始的有效结果序号，`cancelJump(true)` 取消输入并还焦点给计数按钮。`refreshLanguage()` 更新界面词条，`reposition()` 按浮层空间选择上下展开，`getAvoidRect()` 包含当前可见菜单和错误提示。`closeDetails(true)` 关闭菜单并将焦点还给更多按钮；输入框聚焦、点击页面和导航操作关闭菜单。查询文字和错误消息必须通过 `textContent` 或输入框的 `value` 显示。
 
 ## 必须保持的行为
 

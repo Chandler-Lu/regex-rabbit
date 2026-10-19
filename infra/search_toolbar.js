@@ -3,11 +3,14 @@
   "use strict";
   var COMPOSITION_KEY_CODE = 229;
   var FULLWIDTH_ZERO_CODE = 0xff10;
+  var COUNT_FULL_SIZE_CHARS = 10;
   var POLICY = globalThis.RRRuntimePolicy;
   function t(key, params) { return globalThis.RRi18n.t(key, params); }
   var SVG = "http://www.w3.org/2000/svg";
   var PATHS = { close: "M6 6l12 12M18 6L6 18", up: "M6 14l6-6 6 6", down: "M6 10l6 6 6-6",
-    more: "M12 5h.01M12 12h.01M12 19h.01", drag: "M8 6h.01M16 6h.01M8 12h.01M16 12h.01M8 18h.01M16 18h.01", check: "M5 12l4 4L19 6" };
+    more: "M12 5h.01M12 12h.01M12 19h.01", drag: "M8 6h.01M16 6h.01M8 12h.01M16 12h.01M8 18h.01M16 18h.01", check: "M5 12l4 4L19 6",
+    page: "M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6",
+    selection: "M8 4H4v4M16 4h4v4M20 16v4h-4M8 20H4v-4M8 10h8M8 14h8" };
   function element(tag, className, text) {
     var node = document.createElement(tag);
     if (className) node.className = className;
@@ -94,7 +97,6 @@
     jumpInput.autocomplete = "off"; jumpInput.spellcheck = false; jumpInput.hidden = true;
     jumpInput.setAttribute("data-i18n-aria-label", "toolbar.jumpLabel"); jumpInput.setAttribute("data-i18n-title", "toolbar.jumpHint");
     resultControl.append(locate, jumpInput);
-    var sep = element("span", "rr-separator"); sep.setAttribute("aria-hidden", "true");
     var nav = element("div", "rr-nav"); nav.id = "regex-nav-button-wrapper";
     var prev = button("regex-prev-button", "toolbar.previous", "rr-icon-button", function () { actions.onNavigate(-1); }, "up");
     var next = button("regex-next-button", "toolbar.next", "rr-icon-button", function () { actions.onNavigate(1); }, "down");
@@ -104,7 +106,28 @@
     advanced.setAttribute("aria-controls", "regex-advanced-panel");
     var close = button("regex-close-button", "toolbar.close", "rr-icon-button", actions.onClose, "close");
     var dragHandle = button("regex-drag-handle", "toolbar.drag", "rr-drag-handle", null, "drag");
-    row.append(dragHandle, field, modeQuick, caseBtn, resultControl, sep, nav, advanced, close); container.appendChild(row);
+    var scope = element("button", "rr-scope-toggle"), scopeValue = "page";
+    scope.id = "regex-search-scope"; scope.type = "button";
+    scope.setAttribute("aria-describedby", "regex-search-status regex-search-status-detail");
+    var scopeIcon = icon("page"), scopePath = scopeIcon.firstChild;
+    scope.appendChild(scopeIcon);
+    function refreshScope() {
+      var selected = scopeValue === "selection";
+      scopePath.setAttribute("d", PATHS[scopeValue]);
+      scope.setAttribute("value", scopeValue);
+      scope.setAttribute("data-scope", scopeValue);
+      var hint = t("toolbar.scopeSwitch", { current: t(selected ? "toolbar.selection" : "toolbar.page"),
+        next: t(selected ? "toolbar.page" : "toolbar.selection") });
+      scope.setAttribute("aria-label", hint);
+      scope.title = hint + " · " + t("toolbar.selectionHint");
+    }
+    Object.defineProperty(scope, "value", { get: function () { return scopeValue; },
+      set: function (next) { if (next === "page" || next === "selection") { scopeValue = next; refreshScope(); } } });
+    scope.addEventListener("click", function () {
+      closeDetails(); scope.value = scopeValue === "page" ? "selection" : "page";
+      scope.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    row.append(dragHandle, field, modeQuick, caseBtn, scope, resultControl, nav, advanced, close); container.appendChild(row);
 
     var panel = element("div", "rr-menu"); panel.id = "regex-advanced-panel"; panel.hidden = true;
     panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", t("toolbar.options")); panel.setAttribute("data-i18n-aria-label", "toolbar.options");
@@ -112,13 +135,8 @@
       { value: "literal", label: "toolbar.text", id: "regex-mode-literal" }, { value: "regex", label: "toolbar.regexShort", id: "regex-mode-regex" }
     ], actions.onMode);
     modeQuick.addEventListener("click", function () { mode.choose(mode.group.value === "regex" ? "literal" : "regex"); });
-    var scope = radioGroup("regex-search-scope", "toolbar.scope", [
-      { value: "page", label: "toolbar.page", id: "regex-scope-page" }, { value: "selection", label: "toolbar.selection", id: "regex-scope-selection" }
-    ]);
-    scope.group.setAttribute("aria-describedby", "regex-search-status regex-search-status-detail");
-    scope.buttons[1].title = t("toolbar.selectionHint"); scope.buttons[1].setAttribute("data-i18n-title", "toolbar.selectionHint");
     mode.group.classList.add("rr-mode-menu");
-    panel.append(mode.group, scope.group);
+    panel.append(mode.group);
     var basics = element("div", "rr-menu-toggles");
     var caseMenu = toggle("regex-case-menu-toggle", "toolbar.caseShort", "toolbar.caseSensitive", actions.onCase);
     caseMenu.classList.add("rr-case-menu");
@@ -191,8 +209,10 @@
       panel.insertBefore(feedback, panel.firstChild); document.addEventListener("pointerdown", outside, true);
       reposition();
       if (!event.detail) {
-        var firstGroup = getComputedStyle(mode.group).display === "none" ? scope : mode;
-        firstGroup.buttons[firstGroup.group.value === (firstGroup === mode ? "regex" : "selection") ? 1 : 0].focus();
+        var first = Array.from(panel.querySelectorAll("button")).find(function (node) {
+          return !node.disabled && node.tabIndex >= 0 && node.getClientRects().length;
+        });
+        if (first) first.focus({ preventScroll: true });
       }
     });
     input.addEventListener("focus", function () { closeDetails(); });
@@ -203,6 +223,7 @@
     container.addEventListener("click", function (event) { event.stopPropagation(); });
     function syncCount() {
       if (!jumpInput.hidden && editingCount !== count.textContent) cancelJump(false);
+      count.classList.toggle("rr-count-long", count.textContent.length > COUNT_FULL_SIZE_CHARS);
       var result = /^(\d+)\/(\d+)/.exec(count.textContent);
       locate.setAttribute("aria-label", result ? t("toolbar.locateCount", { current: result[1], total: result[2] }) : t("toolbar.locate"));
       locate.title = result ? t("toolbar.jumpHint") : t("toolbar.noMatches");
@@ -218,7 +239,7 @@
         item[0].classList.toggle("active", !!item[1]); item[0].setAttribute("aria-pressed", String(!!item[1]));
       });
       multilineBtn.disabled = dotAllBtn.disabled = currentMode !== "regex";
-      var enabled = !!config.wholeWord || !!auto || scope.group.value === "selection" || currentMode === "regex" && (config.multiline || config.dotAll);
+      var enabled = !!config.wholeWord || !!auto || currentMode === "regex" && (config.multiline || config.dotAll);
       advanced.setAttribute("data-active-options", String(enabled));
     }
     function setStatus(message, explanation, tone) {
@@ -229,10 +250,11 @@
       container.setAttribute("data-tone", tone || "neutral"); reposition();
     }
     function idle() {
-      setStatus(t("toolbar.idle"), "", "neutral"); input.setAttribute("aria-invalid", "false"); scope.group.setAttribute("aria-invalid", "false");
+      setStatus(t("toolbar.idle"), "", "neutral"); input.setAttribute("aria-invalid", "false"); scope.setAttribute("aria-invalid", "false");
     }
     function refreshLanguage() {
       globalThis.RRi18n.apply(container); container.lang = globalThis.RRi18n.getLanguage();
+      refreshScope();
       inputHint = t("toolbar.inputHint");
       if (feedback.hidden) input.title = inputHint;
       if (jumpInput.getAttribute("aria-invalid") === "true") {
@@ -272,7 +294,7 @@
     refreshLanguage();
     return { container: container, input: input, dragHandle: dragHandle, jumpInput: jumpInput, caseBtn: caseBtn, autoBtn: autoBtn, countEl: count,
       prevBtn: prev, nextBtn: next, closeBtn: close, modeBtn: modeQuick, wordBtn: wordBtn, locateBtn: locate,
-      multilineBtn: multilineBtn, dotAllBtn: dotAllBtn, scopeEl: scope.group,
+      multilineBtn: multilineBtn, dotAllBtn: dotAllBtn, scopeEl: scope,
       updateOptions: updateOptions, setStatus: setStatus, idle: idle, syncInput: function () {}, syncCount: syncCount,
       confirmLocation: function () {}, refreshLanguage: refreshLanguage, reposition: reposition, getAvoidRect: getAvoidRect,
       cancelJump: cancelJump, isJumpOpen: function () { return !jumpInput.hidden; }, closeDetails: closeDetails, isDetailsOpen: function () { return !panel.hidden; } };

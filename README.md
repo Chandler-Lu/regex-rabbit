@@ -9,6 +9,7 @@ Chrome Manifest V3 extension for searching the current page with regular express
 - Configurable max matches, highlight colors, UI scale, case sensitivity
 - SPA-aware — detects DOM mutations and recreates UI
 - Time-sliced search with cancellation on new input
+- Compact 400px toolbar with a scope icon after the case-sensitivity button switches between the current page and selected text without opening the options menu
 - Dark mode support
 
 ## Development
