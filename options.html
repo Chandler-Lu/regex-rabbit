@@ -1,43 +1,83 @@
 <!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>Regex Rabbit Options</title><link rel="stylesheet" href="options.css"></head>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title data-i18n="options.title">设置 · Regex Rabbit</title>
+  <link rel="stylesheet" href="options.css">
+</head>
 <body>
-<div class="card">
-  <h1>Regex Rabbit</h1>
-  <p class="sub">Search the current page using regular expressions.</p>
+<main class="page">
+  <header class="page-header"><h1>Regex Rabbit <span data-i18n="options.settings">设置</span></h1></header>
+  <form id="settings">
+    <section class="section" aria-labelledby="searchHeading">
+      <h2 id="searchHeading" data-i18n="options.searchHeading">默认搜索</h2>
+      <fieldset class="mode-fieldset">
+        <legend class="sr-only" data-i18n="options.modeLegend">默认搜索方式</legend>
+        <input type="hidden" id="mode" value="regex">
+        <div class="mode-row">
+          <label><input type="radio" name="searchMode" value="literal"><span data-i18n="options.literal">普通文本</span></label>
+          <label><input type="radio" name="searchMode" value="regex" checked><span data-i18n="options.regex">正则表达式</span></label>
+        </div>
+      </fieldset>
+      <div class="check-row">
+        <label data-i18n-title="options.caseHint"><input type="checkbox" id="caseSensitive"><span data-i18n="options.caseSensitive">区分大小写</span></label>
+        <label data-i18n-title="options.wordHint"><input type="checkbox" id="wholeWord"><span data-i18n="options.wholeWord">完整词语</span></label>
+        <label data-i18n-title="options.controlsHint"><input type="checkbox" id="includeControls" checked><span data-i18n="options.includeControls">搜索输入框</span></label>
+      </div>
+      <fieldset id="regexOptions" class="check-row regex-options" aria-describedby="regexHelp">
+        <legend class="sr-only" data-i18n="options.regexLegend">正则选项</legend>
+        <p id="regexHelp" class="sr-only" data-i18n="options.regexHelp">以下两项仅在正则表达式模式下生效。</p>
+        <label data-i18n-title="options.multilineHint"><input type="checkbox" id="multiline"><span data-i18n="options.multiline">逐行匹配</span><code>^ $</code></label>
+        <label data-i18n-title="options.dotAllHint"><input type="checkbox" id="dotAll"><span data-i18n="options.dotAll">点号匹配换行</span></label>
+      </fieldset>
+    </section>
 
-  <label>UI Scale <span id="scaleVal">1.0x</span></label>
-  <input type="range" id="scale" min="0.5" max="2.5" step="0.1" value="1.0">
+    <section class="section" aria-labelledby="appearanceHeading">
+      <h2 id="appearanceHeading" data-i18n="options.appearanceHeading">外观</h2>
+      <div class="setting-row language-row"><label for="uiLanguage" data-i18n="options.language">语言</label><select id="uiLanguage"><option value="auto" data-i18n="options.languageAuto">跟随浏览器</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="de">Deutsch</option><option value="fr">Français</option><option value="es">Español</option></select></div>
+      <div class="setting-row position-row"><span aria-hidden="true"></span><label data-i18n-title="options.positionHint"><input type="checkbox" id="rememberPosition" aria-describedby="positionHelp"><span data-i18n="options.rememberPosition">永久记忆位置</span></label></div>
+      <p id="positionHelp" class="sr-only" data-i18n="options.positionHint"></p>
+      <div class="setting-row scale-row">
+        <label for="scale" data-i18n="options.scale">搜索栏大小</label>
+        <div class="scale-fields"><div class="scale-control"><input type="range" id="scale" value="1" aria-describedby="scaleHelp"><output id="scaleVal" for="scale">100%</output></div><div class="scale-presets" role="group" data-i18n-aria-label="options.scalePresets"><button type="button" data-scale="0.75">75%</button><button type="button" data-scale="1" aria-pressed="true">100%</button><button type="button" data-scale="1.25">125%</button><button type="button" data-scale="1.5">150%</button></div></div>
+      </div>
+      <p id="scaleHelp" class="sr-only" data-i18n="options.scaleHelp">范围为 50%–250%；网页空间不足时会限制搜索栏尺寸。</p>
+      <div class="setting-row color-field">
+        <label for="highlightColor" data-i18n="options.highlightColor">匹配颜色</label>
+        <div class="color-input"><input type="color" id="highlightColorPicker" value="#ffe082" data-i18n-aria-label="options.highlightPicker"><input type="text" id="highlightColor" value="#ffe082" required spellcheck="false" autocapitalize="off" aria-describedby="colorHelp"></div>
+      </div>
+      <div class="setting-row color-field">
+        <label for="currentColor" data-i18n="options.currentColor">当前颜色</label>
+        <div class="color-input"><input type="color" id="currentColorPicker" value="#ff6d00" data-i18n-aria-label="options.currentPicker"><input type="text" id="currentColor" value="#ff6d00" required spellcheck="false" autocapitalize="off" aria-describedby="colorHelp"></div>
+      </div>
+      <div class="setting-row preview-row"><span class="field-label" data-i18n="options.preview">预览</span><div class="highlight-preview" data-i18n-aria-label="options.previewLabel"><mark id="colorPreview" data-i18n="options.previewMatch">匹配文字</mark><mark id="currentPreview" class="current" data-i18n="options.previewCurrent">当前结果</mark></div></div>
+      <p id="colorHelp" class="sr-only" data-i18n="options.colorHelp">可填写 #RGB、#RGBA、#RRGGBB、#RRGGBBAA、rgb() 或 rgba()；透明度会保留，色块选择器仅选择不透明颜色。</p>
+    </section>
 
-  <label>Max Matches</label>
-  <input type="number" id="maxMatches" min="100" max="20000" value="1000">
+    <details id="advancedSettings" class="advanced">
+      <summary data-i18n="options.advanced">更多设置</summary>
+      <div class="advanced-body">
+        <div class="setting-row"><label for="autoSearchDebounce" data-i18n="options.debounce" data-i18n-title="options.debounceHint">自动更新等待</label><div class="unit-input"><input type="number" id="autoSearchDebounce" value="1500" required aria-describedby="debounceHelp"><span aria-hidden="true" data-i18n="options.unitMs">毫秒</span></div></div>
+        <p id="debounceHelp" class="sr-only" data-i18n="options.debounceHelp">仅在当前网页手动开启自动更新后生效。范围为 500–5,000 毫秒。</p>
+        <div class="budget-presets" role="group" data-i18n-aria-label="options.budgetPresets"><button type="button" data-budget="light" data-i18n="options.budgetLight" data-i18n-title="options.budgetLightHint">轻量</button><button type="button" data-budget="balanced" aria-pressed="true" data-i18n="options.budgetBalanced" data-i18n-title="options.budgetBalancedHint">均衡</button><button type="button" data-budget="large" data-i18n="options.budgetLarge" data-i18n-title="options.budgetLargeHint">大页面</button></div>
+        <p id="budgetStatus" class="sr-only" aria-live="polite"></p>
+        <div class="setting-row"><label for="maxMatches" data-i18n="options.maxMatches">最多匹配</label><div class="unit-input"><input type="number" id="maxMatches" value="9999" required aria-describedby="matchesHelp"><span aria-hidden="true" data-i18n="options.unitMatches">条</span></div></div>
+        <p id="matchesHelp" class="sr-only" data-i18n="options.matchesHelp">100–20,000 条，达到上限后停止匹配。</p>
+        <div class="setting-row"><label for="workerTimeoutMs" data-i18n="options.timeout">搜索超时</label><div class="unit-input"><input type="number" id="workerTimeoutMs" value="5000" required aria-describedby="timeoutHelp"><span aria-hidden="true" data-i18n="options.unitMs">毫秒</span></div></div>
+        <p id="timeoutHelp" class="sr-only">500–900,000 毫秒，达到时限会停止整个查询。</p>
+        <div class="setting-row"><label for="maxScannedChars" data-i18n="options.maxScannedChars">最多扫描</label><div class="unit-input"><input type="number" id="maxScannedChars" value="33554432000" required aria-describedby="scanHelp scanSummary"><span aria-hidden="true" data-i18n="options.unitChars">字符</span></div></div>
+        <p id="scanHelp" class="sr-only">1,024–67,108,864,000，按 UTF-16 代码单元计数。</p><p id="scanSummary" class="sr-only"></p>
+      </div>
+    </details>
 
-  <label>Highlight Color</label>
-  <div class="color-row">
-    <input type="color" id="highlightColor" value="#ffe082">
-    <span id="colorPreview" class="preview">Sample</span>
-  </div>
-
-  <label>Match Limit Color</label>
-  <div class="color-row">
-    <input type="color" id="currentColor" value="#ff6d00">
-    <span id="currentPreview" class="preview current">Current</span>
-  </div>
-
-  <label><input type="checkbox" id="caseSensitive"> Default Case‑Sensitive</label>
-
-  <hr>
-
-  <h2>Auto Search</h2>
-  <p class="sub">When enabled, Regex Rabbit re‑searches automatically as the page changes.</p>
-
-  <label>Debounce (ms) — delay after last page change</label>
-  <input type="number" id="autoSearchDebounce" min="500" max="5000" step="100" value="1500">
-
-  <button id="save">Save</button>
-  <span id="status"></span>
-</div>
-
+    <footer class="action-bar"><p id="status" role="status" aria-live="polite"></p><div class="action-buttons"><button id="retryLoad" type="button" class="button secondary" data-i18n="options.retryLoad" hidden>重试读取</button><button id="reset" type="button" class="button secondary" data-i18n="options.reset">恢复默认</button><button id="save" type="submit" class="button primary" data-i18n="options.save" disabled>保存</button></div></footer>
+  </form>
+</main>
+<script src="domain/runtime_policy.js"></script>
+<script src="domain/runtime_config.js"></script>
+<script src="infra/ui_i18n.js"></script>
 <script src="options.js"></script>
 </body>
 </html>

@@ -1,0 +1,11 @@
+{
+  "appName": {
+    "message": "Regex Rabbit"
+  },
+  "appDescription": {
+    "message": "在 Chrome 中使用正则表达式搜索当前页面。"
+  },
+  "openCommand": {
+    "message": "打开 Regex Rabbit"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "appName": {
+    "message": "Regex Rabbit"
+  },
+  "appDescription": {
+    "message": "Chrome の現在のページを正規表現で検索します。"
+  },
+  "openCommand": {
+    "message": "Regex Rabbit を開く"
+  }
+}
